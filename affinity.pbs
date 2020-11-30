@@ -1,0 +1,99 @@
+# A simple template script to run OpenMP batch jobs on ARCHER at EPCC
+#
+# You have to do three things to run a program with it:
+#
+# 1) Make a copy of the script with the same name as your OpenMP executable,
+#    eg if the executable is 'myjob' then type: cp ompbatch.pbs myjob.pbs
+#
+# 2) Set the variable OMP_NUM_THREADS appropriately (up to a maximum of 24)
+#
+# 3) Submit the script: qsub myjob.pbs
+#
+# All screen output (stdout and stderr) will appear in a file called
+# myjob.pbs.oXXXXX, where XXXXX is the job number assigned at submit time.
+#
+# David Henty, EPCC, 25/11/2014
+#
+
+#PBS -A y14-CDT-Soton
+#PBS -j oe
+#PBS -l walltime=00:30:00
+#PBS -l select=1
+
+# PARAMETERS
+NO_RUNS=15
+SCHEDULE=affinity
+CHUNK_SIZE=0
+
+cd $PBS_O_WORKDIR
+
+echo $PBS_O_WORKDIR
+
+OMPPROG=`basename $PBS_JOBNAME .pbs`
+
+echo -------------------------------------------------------------------------
+
+echo Running OpenMP program $OMPPROG on $OMP_NUM_THREADS threads with
+
+echo "Started at $(date)"
+echo -------------------------------------------------------------------------
+
+# Retreive the correct answers
+read CORRECT_A < a_answer.txt
+read CORRECT_C < c_answer.txt
+
+for NUM_THREADS in 1 2 3 6 12 24; do
+  export OMP_NUM_THREADS=$NUM_THREADS
+
+  echo ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  echo about to execute with $OMP_SCHEDULE on $OMP_NUM_THREADS threads
+
+  # First clear the old run logs
+  OUTPUT_FILE=./c_logs/${SCHEDULE}_${CHUNK_SIZE}_${OMP_NUM_THREADS}_output.txt
+
+  if [ -f "$OUTPUT_FILE" ]; then
+    rm ${OUTPUT_FILE}
+  fi
+
+  for i in `seq 1 $NO_RUNS`; do
+    # Run the program
+    (time aprun -n 1 -d $OMP_NUM_THREADS ./$OMPPROG $OMP_NUM_THREADS) 2>&1 > my_output.txt
+    cat my_output.txt >> ${OUTPUT_FILE}
+
+    # Check the result is valid
+    if [ $i == 1 ]; then
+      grep < my_output.txt "Sum of a is" > a_line.txt
+      read -a my_array_a < a_line.txt
+      ANSWER_A=${my_array_a[${#my_array_a[@]} - 1]}
+
+      grep < my_output.txt "Sum of c is" > c_line.txt
+      read -a my_array_c < c_line.txt
+      ANSWER_C=${my_array_c[${#my_array_c[@]} - 1]}
+
+      echo parallel answer for loop 1 : $ANSWER_A
+      echo serial answer for loop 1 : $CORRECT_A
+
+      echo parallel answer for loop 2 : $ANSWER_C
+      echo serial answer for loop 2 : $CORRECT_C
+
+      rm a_line.txt c_line.txt
+    fi
+
+    grep < my_output.txt "reps of loop 1" > loop1_line.txt
+    read -a array_1 < loop1_line.txt
+    TIME_1=${array_1[${#array_1[@]} - 1]}
+
+    grep < my_output.txt "reps of loop 2" > loop2_line.txt
+    read -a array_2 < loop2_line.txt
+    TIME_2=${array_2[${#array_2[@]} - 1]}
+
+    # Append the times to a .csv file containing all of the results
+    echo $SCHEDULE,$CHUNK_SIZE,$OMP_NUM_THREADS,1,$TIME_1 >> results.csv
+    echo $SCHEDULE,$CHUNK_SIZE,$OMP_NUM_THREADS,2,$TIME_2 >> results.csv
+
+    rm loop1_line.txt loop2_line.txt
+  done
+done
+
+echo -------------------------------------------------------------------------
+echo "Finished at $(date)"
